@@ -7,6 +7,7 @@ import 'services/daily.dart';
 import 'services/dictionary.dart';
 import 'services/pronunciation.dart';
 import 'screens/home_screen.dart';
+import 'theme/app_theme.dart';
 
 late final ProgressService progress;
 late final Scraper scraper;
@@ -39,13 +40,7 @@ class DictationApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Dictation Loop',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E88E5),
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      theme: buildAppTheme(),
       home: const HomeScreen(),
     );
   }

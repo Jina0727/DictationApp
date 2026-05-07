@@ -170,11 +170,16 @@ class ProgressService {
     await _save();
   }
 
+  // A day is fully done when every sentence has both rounds (1.0x and 1.5x)
+  // marked. We tag each round with `#x10` / `#x15`. Pre-rounds-tracking data
+  // (bare sentence IDs) is treated as "1.5x done" for backwards compatibility.
   bool isDayFullyDone(DateTime d) {
     final set = _dailySets[dateKey(d)];
     if (set == null || set.isEmpty) return false;
     final done = _dailyDone[dateKey(d)] ?? const <String>{};
-    return set.every(done.contains);
+    return set.every((id) =>
+        (done.contains('$id#x10') && done.contains('$id#x15')) ||
+        done.contains(id) /* legacy */);
   }
 
   int dailyDoneCount(DateTime d) => (_dailyDone[dateKey(d)] ?? const <String>{}).length;
@@ -186,7 +191,9 @@ class ProgressService {
     final set = _dailySets[key];
     if (set == null || set.isEmpty) return false;
     final done = _dailyDone[key] ?? const <String>{};
-    return set.every(done.contains);
+    return set.every((id) =>
+        (done.contains('$id#x10') && done.contains('$id#x15')) ||
+        done.contains(id) /* legacy */);
   }
 
   int get totalCompletedDays {
@@ -197,10 +204,16 @@ class ProgressService {
     return count;
   }
 
+  /// Distinct sentences ever studied. Round-suffixed entries (`id#x10`,
+  /// `id#x15`) collapse to a single sentence; legacy bare-id entries count
+  /// as-is.
   int get totalSentencesDone {
     final all = <String>{};
     for (final ids in _dailyDone.values) {
-      all.addAll(ids);
+      for (final entry in ids) {
+        final hash = entry.lastIndexOf('#');
+        all.add(hash >= 0 ? entry.substring(0, hash) : entry);
+      }
     }
     return all.length;
   }

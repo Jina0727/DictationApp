@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 class DayCellState {
   final int doneCount;
@@ -75,15 +76,15 @@ class _MonthCalendarState extends State<MonthCalendar> {
       if (isFuture) {
         fg = Theme.of(context).disabledColor;
       } else if (st.fullyDone) {
-        bg = Colors.greenAccent.withValues(alpha: 0.35);
-        fg = Colors.greenAccent.shade400;
-        mark = Icon(Icons.check, size: 14, color: Colors.greenAccent.shade400);
+        bg = AppPalette.success.withValues(alpha: 0.45);
+        fg = Colors.white;
+        mark = const Icon(Icons.check, size: 14, color: Colors.white);
       } else if (st.partial) {
-        bg = Colors.amber.withValues(alpha: 0.25);
-        fg = Colors.amber.shade300;
+        bg = AppPalette.warn.withValues(alpha: 0.30);
+        fg = AppPalette.warn;
       }
       if (isToday) {
-        border = Border.all(color: scheme.primary, width: 2);
+        border = Border.all(color: scheme.primary, width: 2.5);
       }
 
       cells.add(InkWell(

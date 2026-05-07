@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../services/daily.dart';
 import '../utils/answer_check.dart';
 import '../widgets/answer_result_card.dart';
+import '../widgets/empty_state.dart';
 
 class WrongAnswersScreen extends StatefulWidget {
   const WrongAnswersScreen({super.key});
@@ -126,7 +127,11 @@ class _WrongAnswersScreenState extends State<WrongAnswersScreen> {
     if (_items!.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('Wrong answers')),
-        body: const Center(child: Text('Empty — nothing to review.')),
+        body: const EmptyState(
+          emoji: '🎉',
+          title: 'No mistakes to review',
+          body: "You're doing great. New ones will collect here.",
+        ),
       );
     }
     final h = _current;
@@ -144,7 +149,7 @@ class _WrongAnswersScreenState extends State<WrongAnswersScreen> {
         title: Text('Wrong answers  ·  ${_idx + 1}/$total'),
       ),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

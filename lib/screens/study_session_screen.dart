@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import '../main.dart';
 import '../models/models.dart';
 import '../services/progress.dart';
@@ -19,6 +21,8 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
   Lesson? _lesson;
   Object? _error;
   final _player = AudioPlayer();
+  YoutubePlayerController? _yt;
+  Timer? _ytStopTimer;
   final _input = TextEditingController();
 
   int _idx = 0;
@@ -43,6 +47,19 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
     try {
       final l = await scraper.fetchLesson(widget.exercisePath);
       if (!mounted) return;
+      if (l.isYouTube) {
+        _yt = YoutubePlayerController(
+          initialVideoId: l.youtubeVideoId!,
+          flags: const YoutubePlayerFlags(
+            autoPlay: false,
+            mute: false,
+            disableDragSeek: true,
+            controlsVisibleAtStart: false,
+            hideControls: true,
+            enableCaption: false,
+          ),
+        );
+      }
       setState(() => _lesson = l);
       _prepareAudio();
     } catch (e) {
@@ -60,7 +77,9 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
 
   Future<void> _prepareAudio() async {
     if (_lesson == null) return;
+    if (_lesson!.isYouTube) return; // YT plays segment-by-segment, no preload
     final url = _current.audioSrc;
+    if (url.isEmpty) return;
     if (_loadedAudioFor != url) {
       try {
         await _player.setUrl(url);
@@ -76,11 +95,37 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
     }
   }
 
+  Future<void> _playYtSegment() async {
+    final yt = _yt;
+    if (yt == null) return;
+    final start = _current.timeStart;
+    final end = _current.timeEnd;
+    final span = end - start;
+    // Speed-aware duration so the timer matches when 1.5x is selected.
+    final realSeconds = span / _speed.value;
+    yt.setPlaybackRate(_speed.value == 1.0
+        ? PlaybackRate.normal
+        : PlaybackRate.oneAndAHalf);
+    yt.seekTo(Duration(milliseconds: (start * 1000).round()));
+    yt.play();
+    _ytStopTimer?.cancel();
+    _ytStopTimer = Timer(
+      Duration(milliseconds: (realSeconds * 1000).round() + 250),
+      () {
+        if (mounted) yt.pause();
+      },
+    );
+  }
+
   Future<void> _play() async {
-    await _prepareAudio();
-    await _player.seek(Duration.zero);
-    await _player.setSpeed(_speed.value);
-    await _player.play();
+    if (_lesson?.isYouTube == true) {
+      await _playYtSegment();
+    } else {
+      await _prepareAudio();
+      await _player.seek(Duration.zero);
+      await _player.setSpeed(_speed.value);
+      await _player.play();
+    }
     setState(() => _listenCount++);
   }
 
@@ -218,7 +263,9 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
 
   @override
   void dispose() {
+    _ytStopTimer?.cancel();
     _player.dispose();
+    _yt?.dispose();
     _input.dispose();
     super.dispose();
   }
@@ -275,7 +322,7 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
         ],
       ),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -323,7 +370,21 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
               LinearProgressIndicator(
                 value: (_idx + 1) / l.challenges.length,
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+              if (_yt != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: YoutubePlayer(
+                      controller: _yt!,
+                      showVideoProgressIndicator: false,
+                      progressIndicatorColor: Colors.transparent,
+                      onReady: () {},
+                    ),
+                  ),
+                ),
+              if (_yt != null) const SizedBox(height: 12),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -400,8 +461,12 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
                   shadowCount: _shadowCount,
                   onIncrement: () => setState(() => _shadowCount++),
                   onPlayOriginal: () async {
-                    await _player.seek(Duration.zero);
-                    await _player.play();
+                    if (_lesson?.isYouTube == true) {
+                      await _playYtSegment();
+                    } else {
+                      await _player.seek(Duration.zero);
+                      await _player.play();
+                    }
                   },
                 ),
                 const SizedBox(height: 12),

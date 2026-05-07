@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../services/dictionary.dart';
+import '../widgets/empty_state.dart';
 
 class WordbookScreen extends StatefulWidget {
   const WordbookScreen({super.key});
@@ -65,14 +66,10 @@ class _WordbookScreenState extends State<WordbookScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (all.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'Empty.\nTap a wrong word during dictation and add it from the meaning sheet.',
-            textAlign: TextAlign.center,
-          ),
-        ),
+      return const EmptyState(
+        emoji: '📔',
+        title: 'Wordbook is empty',
+        body: 'Tap a wrong word during dictation, then add it from the meaning sheet.',
       );
     }
     final filtered = _query.trim().isEmpty

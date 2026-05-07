@@ -8,10 +8,12 @@ class DailyHydrated {
   final SentenceRef ref;
   final Challenge challenge;
   final String lessonName;
+  final String? lessonYoutubeVideoId;
   const DailyHydrated({
     required this.ref,
     required this.challenge,
     required this.lessonName,
+    this.lessonYoutubeVideoId,
   });
 }
 
@@ -158,6 +160,7 @@ class DailyService {
           ref: r,
           challenge: lesson.challenges[r.sentenceIdx],
           lessonName: lesson.lessonName,
+          lessonYoutubeVideoId: lesson.youtubeVideoId,
         ));
       } catch (_) {
         continue;

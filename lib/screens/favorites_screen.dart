@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../models/models.dart';
+import '../widgets/empty_state.dart';
 import 'study_session_screen.dart';
 
 class FavoritesScreen extends StatefulWidget {
@@ -30,14 +31,10 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Favorites')),
       body: favorites.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Empty.\nTap the star on a lesson to save it here.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
+          ? const EmptyState(
+              emoji: '⭐',
+              title: 'No favorites yet',
+              body: 'Tap the star next to a lesson to save it here.',
             )
           : ListView.separated(
               padding: const EdgeInsets.all(12),

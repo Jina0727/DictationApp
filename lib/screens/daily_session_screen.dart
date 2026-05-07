@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:lottie/lottie.dart';
+import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 import '../main.dart';
 import '../services/daily.dart';
 import '../services/progress.dart';
+import '../theme/app_theme.dart';
 import '../utils/answer_check.dart';
 import '../widgets/answer_result_card.dart';
 import '../widgets/shadowing_card.dart';
@@ -20,7 +25,11 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
   Object? _error;
 
   final _player = AudioPlayer();
+  YoutubePlayerController? _yt;
+  String? _ytVideoId; // currently loaded video id (for switching across lessons)
+  Timer? _ytStopTimer;
   final _input = TextEditingController();
+  final _confetti = ConfettiController(duration: const Duration(seconds: 2));
 
   int _idx = 0;
   SpeedTier _speed = SpeedTier.x10;
@@ -53,9 +62,33 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
 
   DailyHydrated get _current => _items![_idx];
 
+  bool get _isYt => _items != null &&
+      _items!.isNotEmpty &&
+      (_current.lessonYoutubeVideoId ?? '').isNotEmpty;
+
   Future<void> _prepareAudio() async {
     if (_items == null || _items!.isEmpty) return;
+    if (_isYt) {
+      final id = _current.lessonYoutubeVideoId!;
+      if (_ytVideoId != id) {
+        _ytVideoId = id;
+        _yt?.dispose();
+        _yt = YoutubePlayerController(
+          initialVideoId: id,
+          flags: const YoutubePlayerFlags(
+            autoPlay: false,
+            mute: false,
+            disableDragSeek: true,
+            controlsVisibleAtStart: false,
+            hideControls: true,
+            enableCaption: false,
+          ),
+        );
+      }
+      return;
+    }
     final url = _current.challenge.audioSrc;
+    if (url.isEmpty) return;
     if (_loadedAudioFor != url) {
       try {
         await _player.setUrl(url);
@@ -71,11 +104,36 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
     }
   }
 
+  Future<void> _playYtSegment() async {
+    final yt = _yt;
+    if (yt == null) return;
+    final start = _current.challenge.timeStart;
+    final end = _current.challenge.timeEnd;
+    final span = end - start;
+    final realSeconds = span / _speed.value;
+    yt.setPlaybackRate(_speed.value == 1.0
+        ? PlaybackRate.normal
+        : PlaybackRate.oneAndAHalf);
+    yt.seekTo(Duration(milliseconds: (start * 1000).round()));
+    yt.play();
+    _ytStopTimer?.cancel();
+    _ytStopTimer = Timer(
+      Duration(milliseconds: (realSeconds * 1000).round() + 250),
+      () {
+        if (mounted) yt.pause();
+      },
+    );
+  }
+
   Future<void> _play() async {
-    await _prepareAudio();
-    await _player.seek(Duration.zero);
-    await _player.setSpeed(_speed.value);
-    await _player.play();
+    if (_isYt) {
+      await _playYtSegment();
+    } else {
+      await _prepareAudio();
+      await _player.seek(Duration.zero);
+      await _player.setSpeed(_speed.value);
+      await _player.play();
+    }
     setState(() => _listenCount++);
   }
 
@@ -92,10 +150,10 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
 
   Future<void> _next() async {
     if (_items == null) return;
-    if (_speed == SpeedTier.x15) {
-      // mark this sentence as daily-done after 1.5x reveal
-      await progress.markDailyDone(widget.date, _current.ref.id);
-    }
+    // Mark this sentence-round as done. Each sentence contributes 2 entries
+    // total (1.0x and 1.5x), so the day's progress goes 0..20 for 10 sentences.
+    final round = _speed == SpeedTier.x10 ? 'x10' : 'x15';
+    await progress.markDailyDone(widget.date, '${_current.ref.id}#$round');
     if (_idx + 1 < _items!.length) {
       setState(() {
         _idx++;
@@ -159,11 +217,40 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
     await daily.advanceCursorPast(_items!.map((h) => h.ref).toList());
 
     if (!mounted) return;
+    _confetti.play();
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('🏆 Today complete!'),
-        content: const Text('Great job. Tomorrow\'s 10 sentences will continue from where you left off.'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Optional Lottie celebration — falls back silently if asset missing
+            FutureBuilder(
+              future: DefaultAssetBundle.of(ctx)
+                  .loadString('assets/lottie/celebration.json')
+                  .then((_) => true)
+                  .catchError((_) => false),
+              builder: (context, snap) {
+                if (snap.data == true) {
+                  return SizedBox(
+                    height: 140,
+                    child: Lottie.asset(
+                      'assets/lottie/celebration.json',
+                      repeat: false,
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              "Great job! Tomorrow's 10 sentences are waiting.",
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
         actions: [
           FilledButton(
             onPressed: () => Navigator.pop(ctx),
@@ -177,8 +264,11 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
 
   @override
   void dispose() {
+    _ytStopTimer?.cancel();
     _player.dispose();
+    _yt?.dispose();
     _input.dispose();
+    _confetti.dispose();
     super.dispose();
   }
 
@@ -210,8 +300,10 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
       appBar: AppBar(
         title: Text('Today  ·  ${_speed.key}  ·  ${_idx + 1}/$total'),
       ),
-      body: SafeArea(
-        child: Padding(
+      body: Stack(
+        children: [
+          SafeArea(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -221,7 +313,21 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
                   overflow: TextOverflow.ellipsis),
               const SizedBox(height: 8),
               LinearProgressIndicator(value: (_idx + 1) / total),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+              if (_yt != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: YoutubePlayer(
+                      controller: _yt!,
+                      showVideoProgressIndicator: false,
+                      progressIndicatorColor: Colors.transparent,
+                      onReady: () {},
+                    ),
+                  ),
+                ),
+              if (_yt != null) const SizedBox(height: 12),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -274,8 +380,12 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
                   shadowCount: _shadowCount,
                   onIncrement: () => setState(() => _shadowCount++),
                   onPlayOriginal: () async {
-                    await _player.seek(Duration.zero);
-                    await _player.play();
+                    if (_isYt) {
+                      await _playYtSegment();
+                    } else {
+                      await _player.seek(Duration.zero);
+                      await _player.play();
+                    }
                   },
                 ),
                 const SizedBox(height: 12),
@@ -290,6 +400,27 @@ class _DailySessionScreenState extends State<DailySessionScreen> {
             ],
           ),
         ),
+      ),
+          Align(
+            alignment: Alignment.topCenter,
+            child: ConfettiWidget(
+              confettiController: _confetti,
+              blastDirection: 3.14 / 2, // downward
+              blastDirectionality: BlastDirectionality.explosive,
+              shouldLoop: false,
+              emissionFrequency: 0.06,
+              numberOfParticles: 24,
+              gravity: 0.4,
+              colors: const [
+                AppPalette.primary,
+                AppPalette.streak,
+                AppPalette.success,
+                AppPalette.warn,
+                AppPalette.danger,
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
