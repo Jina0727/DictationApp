@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 import '../main.dart';
 import '../services/pronunciation.dart';
 
@@ -40,10 +41,48 @@ class _PronunciationCheckSheetState extends State<_PronunciationCheckSheet> {
   Object? _error;
   bool _gettingFeedback = false;
 
+  // TTS playback for tapping words.
+  final _ttsPlayer = AudioPlayer();
+  String? _playingWord;
+
   @override
   void initState() {
     super.initState();
     _evaluate();
+  }
+
+  @override
+  void dispose() {
+    _ttsPlayer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _playWord(String word) async {
+    if (word.isEmpty) return;
+    try {
+      // If currently playing the same word, treat as stop.
+      if (_playingWord == word) {
+        await _ttsPlayer.stop();
+        if (mounted) setState(() => _playingWord = null);
+        return;
+      }
+      setState(() => _playingWord = word);
+      final path = await pronunciation.synthesizeWordToTempFile(word);
+      await _ttsPlayer.setFilePath(path);
+      await _ttsPlayer.play();
+      // Reset highlight when playback completes.
+      _ttsPlayer.processingStateStream
+          .firstWhere((s) => s == ProcessingState.completed)
+          .then((_) {
+        if (mounted) setState(() => _playingWord = null);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _playingWord = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('TTS failed: $e')),
+      );
+    }
   }
 
   Future<void> _evaluate() async {
@@ -83,15 +122,7 @@ class _PronunciationCheckSheetState extends State<_PronunciationCheckSheet> {
       );
       if (!mounted) return;
       setState(() {
-        _result = PronunciationResult(
-          pronunciationScore: r.pronunciationScore,
-          accuracyScore: r.accuracyScore,
-          fluencyScore: r.fluencyScore,
-          completenessScore: r.completenessScore,
-          recognizedText: r.recognizedText,
-          words: r.words,
-          koFeedback: fb,
-        );
+        _result = r.copyWith(koFeedback: fb);
         _gettingFeedback = false;
       });
     } catch (_) {
@@ -154,14 +185,22 @@ class _PronunciationCheckSheetState extends State<_PronunciationCheckSheet> {
           ),
         );
       case _Stage.error:
+        final msg = _error == null
+            ? 'Unknown error'
+            : (_error is Exception
+                ? _error.toString().replaceFirst('Exception: ', '')
+                : _error.toString());
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Failed: ${_error ?? "unknown"}',
-              style: const TextStyle(color: Colors.redAccent),
+            const Text(
+              'Pronunciation check failed',
+              style: TextStyle(
+                  color: Colors.redAccent, fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
+            Text(msg, style: const TextStyle(fontSize: 13)),
+            const SizedBox(height: 12),
             FilledButton.tonalIcon(
               onPressed: _evaluate,
               icon: const Icon(Icons.refresh),
@@ -178,6 +217,8 @@ class _PronunciationCheckSheetState extends State<_PronunciationCheckSheet> {
             const SizedBox(height: 4),
             _ScoreRow(label: 'Accuracy', score: r.accuracyScore),
             _ScoreRow(label: 'Fluency', score: r.fluencyScore),
+            if (r.prosodyScore > 0)
+              _ScoreRow(label: 'Prosody', score: r.prosodyScore),
             _ScoreRow(label: 'Completeness', score: r.completenessScore),
             const SizedBox(height: 12),
             Text('What Azure heard',
@@ -189,42 +230,88 @@ class _PronunciationCheckSheetState extends State<_PronunciationCheckSheet> {
             ),
             const SizedBox(height: 12),
             if (r.words.isNotEmpty) ...[
-              Text('Per-word',
-                  style: Theme.of(context).textTheme.labelMedium),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text('Per-word',
+                      style: Theme.of(context).textTheme.labelMedium),
+                  const SizedBox(width: 8),
+                  Text('tap to hear',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                ],
+              ),
               const SizedBox(height: 6),
               Wrap(
                 spacing: 4,
                 runSpacing: 4,
                 children: r.words.map((w) {
                   Color bg;
+                  String? badge;
                   if (w.errorType == 'Omission') {
-                    bg = Colors.orangeAccent.withValues(alpha: 0.3);
+                    bg = Colors.orangeAccent.withValues(alpha: 0.30);
+                    badge = '✕'; // skipped
                   } else if (w.errorType == 'Insertion') {
                     bg = Colors.purpleAccent.withValues(alpha: 0.25);
+                    badge = '+';
+                  } else if (w.errorType == 'UnexpectedBreak') {
+                    bg = Colors.cyanAccent.withValues(alpha: 0.25);
+                    badge = '||'; // awkward pause
+                  } else if (w.errorType == 'MissingBreak') {
+                    bg = Colors.tealAccent.withValues(alpha: 0.22);
+                    badge = '~';
+                  } else if (w.errorType == 'Monotone') {
+                    bg = Colors.blueAccent.withValues(alpha: 0.22);
+                    badge = '—'; // flat
+                  } else if (w.errorType == 'Mispronunciation' ||
+                      w.accuracyScore < 60) {
+                    bg = Colors.redAccent.withValues(alpha: 0.30);
                   } else if (w.accuracyScore >= 80) {
                     bg = Colors.greenAccent.withValues(alpha: 0.25);
-                  } else if (w.accuracyScore >= 60) {
-                    bg = Colors.amber.withValues(alpha: 0.3);
                   } else {
-                    bg = Colors.redAccent.withValues(alpha: 0.3);
+                    bg = Colors.amber.withValues(alpha: 0.30);
                   }
-                  return Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: bg,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '${w.word} ${w.accuracyScore.round()}',
-                      style: const TextStyle(fontSize: 12),
+                  final isPlaying = _playingWord == w.word;
+                  return InkWell(
+                    borderRadius: BorderRadius.circular(4),
+                    onTap: () => _playWord(w.word),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: bg,
+                        borderRadius: BorderRadius.circular(4),
+                        border: isPlaying
+                            ? Border.all(
+                                color: Colors.white.withValues(alpha: 0.7),
+                                width: 1.5,
+                              )
+                            : null,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isPlaying ? Icons.volume_up : Icons.play_arrow,
+                            size: 12,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            badge != null
+                                ? '${w.word} $badge'
+                                : '${w.word} ${w.accuracyScore.round()}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 }).toList(),
               ),
               const SizedBox(height: 12),
             ],
-            Text('한국어 코칭',
+            Text('코칭',
                 style: Theme.of(context).textTheme.labelMedium),
             const SizedBox(height: 4),
             if (_gettingFeedback)
